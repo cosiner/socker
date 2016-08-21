@@ -1,0 +1,4 @@
+package: github.com/cosiner/socker
+import:
+- package: github.com/pkg/sftp
+- package: golang.org/x/crypto/ssh
