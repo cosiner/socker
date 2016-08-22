@@ -198,7 +198,7 @@ func (s FsSftp) OpenFile(name string, flag int, perm os.FileMode) (File, error) 
 	var chmod bool
 	if flag&os.O_CREATE != 0 {
 		_, err := s.Stat(name)
-		chmod = s.IsNotExist(err)
+		chmod = err != nil && s.IsNotExist(err)
 	}
 
 	fd, err := s.sftp.OpenFile(name, flag)
