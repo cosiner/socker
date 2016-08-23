@@ -241,12 +241,30 @@ func (s *SSH) Rcmd(cmd string, env ...string) ([]byte, error) {
 	return sess.CombinedOutput(s.rcmd(cmd))
 }
 
+func (s *SSH) cmdBg(cmd, stdout, stderr string) string {
+	if stdout == "" {
+		stdout = "nohup.out"
+	}
+	if stderr == "" || stderr == stdout {
+		stderr = "&1"
+	}
+	return fmt.Sprintf("nohup %s >%s 2>%s </dev/null &", cmd, stdout, stderr)
+}
+
 func (s *SSH) Lcmd(cmd string, env ...string) ([]byte, error) {
 	c := exec.Command("sh", "-c", s.lcmd(cmd))
 	if len(env) > 0 {
 		c.Env = append(c.Env, env...)
 	}
 	return c.CombinedOutput()
+}
+
+func (s *SSH) RcmdBg(cmd, stdout, stderr string, env ...string) ([]byte, error) {
+	return s.Rcmd(s.cmdBg(cmd, stdout, stderr), env...)
+}
+
+func (s *SSH) LcmdBg(cmd, stdout, stderr string, env ...string) ([]byte, error) {
+	return s.Lcmd(s.cmdBg(cmd, stdout, stderr), env...)
 }
 
 func (s *SSH) sync(fs, remoteFs Fs, path, remotePath string) error {
