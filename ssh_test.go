@@ -23,7 +23,9 @@ var (
 				PrivateKeyFile: "/home/user/.ssh/gate",
 			},
 		},
+		Gates: map[string]string{},
 	}
+	matcher = MatchPlain
 )
 
 func TestSSH(t *testing.T) {
@@ -56,21 +58,21 @@ func testSSH(t *testing.T, gate *SSH) {
 }
 
 func TestMux(t *testing.T) {
-	mux, err := NewMux(auth)
+	mux, err := NewMux(auth, matcher)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer mux.Close()
 	mux.Keepalive(time.Second * 10)
 
-	agentFoo, err := mux.Dial(ADDR_AGENT_FOO, ADDR_GATE)
+	agentFoo, err := mux.Dial(ADDR_AGENT_FOO)
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	defer agentFoo.Close()
 
-	agentBar, err := mux.Dial(ADDR_AGENT_BAR, "")
+	agentBar, err := mux.Dial(ADDR_AGENT_BAR)
 	if err != nil {
 		t.Error(err)
 		return

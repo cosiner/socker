@@ -3,7 +3,9 @@ package socker
 import (
 	"errors"
 	"fmt"
+	"net"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,6 +15,49 @@ var (
 	ErrMuxClosed    = errors.New("mux has been closed")
 	ErrNoAuthMethod = errors.New("no auth method can be applied to agent")
 )
+
+type (
+	Matcher        func(addr string) bool
+	MatcherBuilder func(string) (Matcher, error)
+)
+
+func MatchRegexp(addr string) (Matcher, error) {
+	r, err := regexp.Compile(addr)
+	if err != nil {
+		return nil, err
+	}
+	return func(addr string) bool {
+		return r.MatchString(addr)
+	}, nil
+}
+
+func MatchIPNet(cidr string) (Matcher, error) {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return nil, err
+	}
+	return func(addr string) bool {
+		if strings.IndexByte(addr, ':') >= 0 {
+			host, _, err := net.SplitHostPort(addr)
+			if err != nil || host == "" {
+				return false
+			}
+			addr = host
+		}
+
+		ip := net.ParseIP(addr)
+		if ip == nil {
+			return false
+		}
+		return ipnet.Contains(ip)
+	}, nil
+}
+
+func MatchPlain(addr string) (Matcher, error) {
+	return func(dst string) bool {
+		return addr == dst
+	}, nil
+}
 
 type MuxAuth struct {
 	Default *Auth
@@ -54,12 +99,22 @@ func (auth *MuxAuth) Validate() error {
 	return auth.checkAuthes(auth.Agents)
 }
 
+type muxAuth struct {
+	Matcher
+	*Auth
+}
+
+type muxGate struct {
+	Matcher
+	Gate string
+}
+
 type Mux struct {
 	closed int32
 
 	defaultAuth *Auth
-	auths       map[*regexp.Regexp]*Auth
-	gates       map[*regexp.Regexp]string
+	auths       []muxAuth
+	gates       []muxGate
 
 	mu   sync.RWMutex
 	sshs map[string]*SSH
@@ -67,7 +122,7 @@ type Mux struct {
 	aliveChan chan struct{}
 }
 
-func NewMux(auth MuxAuth) (*Mux, error) {
+func NewMux(auth MuxAuth, builder MatcherBuilder) (*Mux, error) {
 	err := auth.Validate()
 	if err != nil {
 		return nil, err
@@ -76,26 +131,32 @@ func NewMux(auth MuxAuth) (*Mux, error) {
 
 	m.sshs = make(map[string]*SSH)
 
-	m.gates = make(map[*regexp.Regexp]string)
+	m.gates = make([]muxGate, 0, len(auth.Gates))
 	for addr, gate := range auth.Gates {
 		if gate == "" {
 			continue
 		}
-		r, err := regexp.Compile(addr)
+		matcher, err := builder(addr)
 		if err != nil {
-			return nil, fmt.Errorf("compile addr %s failed: %s", addr, err.Error())
+			return nil, fmt.Errorf("create matcher for addr %s failed: %s", addr, err.Error())
 		}
-		m.gates[r] = gate
+		m.gates = append(m.gates, muxGate{
+			Matcher: matcher,
+			Gate:    gate,
+		})
 	}
 
 	m.defaultAuth = auth.Default
-	m.auths = make(map[*regexp.Regexp]*Auth)
+	m.auths = make([]muxAuth, 0, len(auth.Agents))
 	for addr, auth := range auth.Agents {
-		r, err := regexp.Compile(addr)
+		matcher, err := builder(addr)
 		if err != nil {
-			return nil, fmt.Errorf("compile addr %s failed: %s", addr, err.Error())
+			return nil, fmt.Errorf("create matcher for addr %s failed: %s", addr, err.Error())
 		}
-		m.auths[r] = auth
+		m.auths = append(m.auths, muxAuth{
+			Matcher: matcher,
+			Auth:    auth,
+		})
 	}
 	return &m, nil
 }
@@ -179,18 +240,18 @@ func (m *Mux) Close() error {
 }
 
 func (m *Mux) Gate(addr string) string {
-	for r, gate := range m.gates {
-		if r.MatchString(addr) {
-			return gate
+	for i := range m.gates {
+		if m.gates[i].Matcher(addr) {
+			return m.gates[i].Gate
 		}
 	}
 	return ""
 }
 
 func (m *Mux) Auth(addr string) (*Auth, error) {
-	for r, auth := range m.auths {
-		if r.MatchString(addr) {
-			return auth, nil
+	for i := range m.auths {
+		if m.auths[i].Matcher(addr) {
+			return m.auths[i].Auth, nil
 		}
 	}
 
