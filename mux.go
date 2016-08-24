@@ -16,8 +16,8 @@ var (
 
 type MuxAuth struct {
 	Default *Auth
+	Gates   map[string]string
 	Agents  map[string]*Auth
-	Regexp  bool
 }
 
 func (a *MuxAuth) checkAuth(addr string, auth *Auth) error {
@@ -58,8 +58,8 @@ type Mux struct {
 	closed int32
 
 	defaultAuth *Auth
-	regexpAuths map[*regexp.Regexp]*Auth
-	auths       map[string]*Auth
+	auths       map[*regexp.Regexp]*Auth
+	gates       map[*regexp.Regexp]string
 
 	mu   sync.RWMutex
 	sshs map[string]*SSH
@@ -75,19 +75,27 @@ func NewMux(auth MuxAuth) (*Mux, error) {
 	var m Mux
 
 	m.sshs = make(map[string]*SSH)
-	m.defaultAuth = auth.Default
 
-	if !auth.Regexp {
-		m.auths = auth.Agents
-	} else {
-		m.regexpAuths = make(map[*regexp.Regexp]*Auth)
-		for addr, auth := range auth.Agents {
-			r, err := regexp.Compile(addr)
-			if err != nil {
-				return nil, fmt.Errorf("compile addr %s failed: %s", addr, err.Error())
-			}
-			m.regexpAuths[r] = auth
+	m.gates = make(map[*regexp.Regexp]string)
+	for addr, gate := range auth.Gates {
+		if gate == "" {
+			continue
 		}
+		r, err := regexp.Compile(addr)
+		if err != nil {
+			return nil, fmt.Errorf("compile addr %s failed: %s", addr, err.Error())
+		}
+		m.gates[r] = gate
+	}
+
+	m.defaultAuth = auth.Default
+	m.auths = make(map[*regexp.Regexp]*Auth)
+	for addr, auth := range auth.Agents {
+		r, err := regexp.Compile(addr)
+		if err != nil {
+			return nil, fmt.Errorf("compile addr %s failed: %s", addr, err.Error())
+		}
+		m.auths[r] = auth
 	}
 	return &m, nil
 }
@@ -170,18 +178,19 @@ func (m *Mux) Close() error {
 	return nil
 }
 
-func (m *Mux) findAuth(addr string) (*Auth, error) {
-	if m.auths != nil {
-		auth, has := m.auths[addr]
-		if has && auth != nil {
-			return auth, nil
+func (m *Mux) Gate(addr string) string {
+	for r, gate := range m.gates {
+		if r.MatchString(addr) {
+			return gate
 		}
 	}
-	if m.regexpAuths != nil {
-		for r, auth := range m.regexpAuths {
-			if r.MatchString(addr) {
-				return auth, nil
-			}
+	return ""
+}
+
+func (m *Mux) Auth(addr string) (*Auth, error) {
+	for r, auth := range m.auths {
+		if r.MatchString(addr) {
+			return auth, nil
 		}
 	}
 
@@ -191,7 +200,7 @@ func (m *Mux) findAuth(addr string) (*Auth, error) {
 	return nil, ErrNoAuthMethod
 }
 
-func (m *Mux) Dial(addr, gateAddr string) (*SSH, error) {
+func (m *Mux) Dial(addr string) (*SSH, error) {
 	if m.isClosed() {
 		return nil, ErrMuxClosed
 	}
@@ -204,6 +213,7 @@ func (m *Mux) Dial(addr, gateAddr string) (*SSH, error) {
 		err error
 	)
 
+	gateAddr := m.Gate(addr)
 	m.mu.RLock()
 	agent, has = m.sshs[addr]
 	if !has {
@@ -236,7 +246,7 @@ func (m *Mux) Dial(addr, gateAddr string) (*SSH, error) {
 }
 
 func (m *Mux) dial(addr string, gate *SSH) (*SSH, error) {
-	auth, err := m.findAuth(addr)
+	auth, err := m.Auth(addr)
 	if err != nil {
 		return nil, err
 	}
