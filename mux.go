@@ -221,7 +221,6 @@ func (m *Mux) Dial(addr string) (*SSH, error) {
 			gate, has = m.sshs[gateAddr]
 			if has {
 				gate = gate.NopClose()
-			} else {
 			}
 		}
 	} else {
