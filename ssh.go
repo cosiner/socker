@@ -20,6 +20,8 @@ import (
 
 var (
 	ErrIsDir = errors.New("destination is directory")
+
+	ChdirSeperator = "&&" // or ;
 )
 
 type Auth struct {
@@ -443,7 +445,7 @@ func (s *SSH) cmd(cwd, cmd string) string {
 	if cwd == "" {
 		return cmd
 	}
-	return fmt.Sprintf("cd %s && %s", cwd, cmd)
+	return fmt.Sprintf("cd %s %s %s", cwd, ChdirSeperator, cmd)
 }
 
 func (s *SSH) Rcd(cwd string) {

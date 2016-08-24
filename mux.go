@@ -3,6 +3,7 @@ package socker
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,6 +17,7 @@ var (
 type MuxAuth struct {
 	Default *Auth
 	Agents  map[string]*Auth
+	Regexp  bool
 }
 
 func (a *MuxAuth) checkAuth(addr string, auth *Auth) error {
@@ -56,6 +58,7 @@ type Mux struct {
 	closed int32
 
 	defaultAuth *Auth
+	regexpAuths map[*regexp.Regexp]*Auth
 	auths       map[string]*Auth
 
 	mu   sync.RWMutex
@@ -73,7 +76,19 @@ func NewMux(auth MuxAuth) (*Mux, error) {
 
 	m.sshs = make(map[string]*SSH)
 	m.defaultAuth = auth.Default
-	m.auths = auth.Agents
+
+	if !auth.Regexp {
+		m.auths = auth.Agents
+	} else {
+		m.regexpAuths = make(map[*regexp.Regexp]*Auth)
+		for addr, auth := range auth.Agents {
+			r, err := regexp.Compile(addr)
+			if err != nil {
+				return nil, fmt.Errorf("compile addr %s failed: %s", addr, err.Error())
+			}
+			m.regexpAuths[r] = auth
+		}
+	}
 	return &m, nil
 }
 
@@ -156,10 +171,20 @@ func (m *Mux) Close() error {
 }
 
 func (m *Mux) findAuth(addr string) (*Auth, error) {
-	auth, has := m.auths[addr]
-	if has && auth != nil {
-		return auth, nil
+	if m.auths != nil {
+		auth, has := m.auths[addr]
+		if has && auth != nil {
+			return auth, nil
+		}
 	}
+	if m.regexpAuths != nil {
+		for r, auth := range m.regexpAuths {
+			if r.MatchString(addr) {
+				return auth, nil
+			}
+		}
+	}
+
 	if m.defaultAuth != nil {
 		return m.defaultAuth, nil
 	}
