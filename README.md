@@ -1,7 +1,7 @@
 # Socker
 
-Socker is a library for [Go](https://golang.org) to simplify the use of
-SSH, inspired by [Fabric](http://www.fabfile.org) for Python.
+Socker is a library for [Go](https://golang.org) to simplify the use of SSH, support keepalive and multiplexing.
+Inspired by [Fabric](http://www.fabfile.org) for Python.
 
 # Documentation
 Documentation can be found at [Godoc](https://godoc.org/github.com/cosiner/socker)
@@ -61,7 +61,7 @@ func TestMux(t *testing.T) {
 			netBar: authBar,
 		},
 
-		DefaultAuth: "netFoo",
+		DefaultAuth: netFoo,
 		AgentGates: map[string]string{
 			"ipnet:192.168.1.0/24": gateFoo + ":22",
 			"ipnet:192.168.2.0/24": gateBar + ":22",
@@ -89,6 +89,7 @@ func TestMux(t *testing.T) {
 		{Addr: gateFoo, Gate: "", Auth: authFoo},
 		{Addr: "192.168.1.1", Gate: gateFoo, Auth: authFoo},
 		{Addr: "192.168.1.255", Gate: gateFoo, Auth: authFoo},
+
 		{Addr: gateBar, Gate: "", Auth: authBar},
 		{Addr: "192.168.2.1", Gate: gateBar, Auth: authBar},
 		{Addr: "192.168.2.255", Gate: gateBar, Auth: authBar},

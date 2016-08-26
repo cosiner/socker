@@ -117,7 +117,7 @@ func TestMux(t *testing.T) {
 			netBar: authBar,
 		},
 
-		DefaultAuth: "netFoo",
+		DefaultAuth: netFoo,
 		AgentGates: map[string]string{
 			"ipnet:192.168.1.0/24": gateFoo + ":22",
 			"ipnet:192.168.2.0/24": gateBar + ":22",
@@ -145,6 +145,7 @@ func TestMux(t *testing.T) {
 		{Addr: gateFoo, Gate: "", Auth: authFoo},
 		{Addr: "192.168.1.1", Gate: gateFoo, Auth: authFoo},
 		{Addr: "192.168.1.255", Gate: gateFoo, Auth: authFoo},
+
 		{Addr: gateBar, Gate: "", Auth: authBar},
 		{Addr: "192.168.2.1", Gate: gateBar, Auth: authBar},
 		{Addr: "192.168.2.255", Gate: gateBar, Auth: authBar},
