@@ -3,9 +3,6 @@ package socker
 import (
 	"errors"
 	"fmt"
-	"net"
-	"regexp"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,149 +13,147 @@ var (
 	ErrNoAuthMethod = errors.New("no auth method can be applied to agent")
 )
 
-type (
-	Matcher        func(addr string) bool
-	MatcherBuilder func(string) (Matcher, error)
-)
-
-func MatchRegexp(addr string) (Matcher, error) {
-	r, err := regexp.Compile(addr)
-	if err != nil {
-		return nil, err
-	}
-	return func(addr string) bool {
-		return r.MatchString(addr)
-	}, nil
-}
-
-func MatchIPNet(cidr string) (Matcher, error) {
-	_, ipnet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return nil, err
-	}
-	return func(addr string) bool {
-		if strings.IndexByte(addr, ':') >= 0 {
-			host, _, err := net.SplitHostPort(addr)
-			if err != nil || host == "" {
-				return false
-			}
-			addr = host
-		}
-
-		ip := net.ParseIP(addr)
-		if ip == nil {
-			return false
-		}
-		return ipnet.Contains(ip)
-	}, nil
-}
-
-func MatchPlain(addr string) (Matcher, error) {
-	return func(dst string) bool {
-		return addr == dst
-	}, nil
-}
-
 type MuxAuth struct {
-	Default *Auth
-	Gates   map[string]string
-	Agents  map[string]*Auth
+	// <ID, Auth>
+	AuthMethods map[string]*Auth
+
+	// AuthID
+	DefaultAuth string
+	// <Matcher, AuthID>
+	AgentAuths map[string]string
+	// <Matcher, GateAddr>
+	AgentGates map[string]string
 }
 
-func (a *MuxAuth) checkAuth(addr string, auth *Auth) error {
+func (a *MuxAuth) checkAuth(id string, auth *Auth) error {
 	_, err := auth.SSHConfig()
 	if err != nil {
-		if addr == "" {
+		if id == "" {
 			return err
 		}
-		return fmt.Errorf("%s: %s", addr, err.Error())
+		return fmt.Errorf("auth method %s is invalid: %s", id, err.Error())
 	}
 	return nil
 }
 
-func (a *MuxAuth) checkAuthes(authes map[string]*Auth) error {
-	for addr, auth := range authes {
-		err := a.checkAuth(addr, auth)
+func (a *MuxAuth) Validate() error {
+	for id, auth := range a.AuthMethods {
+		err := a.checkAuth(id, auth)
 		if err != nil {
 			return err
+		}
+	}
+
+	if a.DefaultAuth != "" && a.AuthMethods[a.DefaultAuth] == nil {
+		return errors.New("default auth method is not exist")
+	}
+	for _, id := range a.AgentAuths {
+		if a.AuthMethods[id] == nil {
+			return fmt.Errorf("agent auth method %s is not exist", id)
 		}
 	}
 	return nil
-}
-
-func (auth *MuxAuth) Validate() error {
-	if auth.Default != nil {
-		err := auth.checkAuth("", auth.Default)
-		if err != nil {
-			return err
-		}
-	} else if len(auth.Agents) == 0 {
-		return ErrNoAuthMethod
-	}
-
-	return auth.checkAuthes(auth.Agents)
 }
 
 type muxAuth struct {
 	Matcher
-	*Auth
+	AuthId string
 }
 
 type muxGate struct {
 	Matcher
-	Gate string
+	GateAddr string
 }
 
 type Mux struct {
 	closed int32
 
-	defaultAuth *Auth
-	auths       []muxAuth
-	gates       []muxGate
+	authMethods   map[string]*Auth
+	defaultAuthId string
+	agents        []muxAuth
+	gates         []muxGate
 
-	mu   sync.RWMutex
-	sshs map[string]*SSH
+	sshsMu sync.RWMutex
+	sshs   map[string]*SSH
 
 	aliveChan chan struct{}
 }
 
-func NewMux(auth MuxAuth, builder MatcherBuilder) (*Mux, error) {
+func NewMux(auth MuxAuth) (*Mux, error) {
 	err := auth.Validate()
 	if err != nil {
 		return nil, err
 	}
 	var m Mux
 
+	m.authMethods = make(map[string]*Auth)
+	for id, auth := range auth.AuthMethods {
+		if id != "" && auth != nil {
+			m.authMethods[id] = auth
+		}
+	}
+
+	m.gates = make([]muxGate, 0, len(auth.AgentGates))
+	for addr, gate := range auth.AgentGates {
+		if addr != "" && gate != "" {
+			matcher, err := createMatcher(addr)
+			if err != nil {
+				return nil, err
+			}
+			m.gates = append(m.gates, muxGate{
+				Matcher:  matcher,
+				GateAddr: gate,
+			})
+		}
+	}
+
+	m.defaultAuthId = auth.DefaultAuth
+	m.agents = make([]muxAuth, 0, len(auth.AgentAuths))
+	for addr, authId := range auth.AgentAuths {
+		if addr != "" && authId != "" {
+			matcher, err := createMatcher(addr)
+			if err != nil {
+				return nil, err
+			}
+
+			m.agents = append(m.agents, muxAuth{
+				Matcher: matcher,
+				AuthId:  authId,
+			})
+		}
+	}
+
 	m.sshs = make(map[string]*SSH)
-
-	m.gates = make([]muxGate, 0, len(auth.Gates))
-	for addr, gate := range auth.Gates {
-		if gate == "" {
-			continue
-		}
-		matcher, err := builder(addr)
-		if err != nil {
-			return nil, fmt.Errorf("create matcher for addr %s failed: %s", addr, err.Error())
-		}
-		m.gates = append(m.gates, muxGate{
-			Matcher: matcher,
-			Gate:    gate,
-		})
-	}
-
-	m.defaultAuth = auth.Default
-	m.auths = make([]muxAuth, 0, len(auth.Agents))
-	for addr, auth := range auth.Agents {
-		matcher, err := builder(addr)
-		if err != nil {
-			return nil, fmt.Errorf("create matcher for addr %s failed: %s", addr, err.Error())
-		}
-		m.auths = append(m.auths, muxAuth{
-			Matcher: matcher,
-			Auth:    auth,
-		})
-	}
 	return &m, nil
+}
+
+func (m *Mux) AgentGate(addr string) string {
+	var gate string
+	for i := range m.gates {
+		if m.gates[i].Matcher(addr) {
+			gate = m.gates[i].GateAddr
+			break
+		}
+	}
+	return gate
+}
+
+func (m *Mux) AgentAuth(addr string) (*Auth, error) {
+	var authId string
+	for i := range m.agents {
+		if m.agents[i].Matcher(addr) {
+			authId = m.agents[i].AuthId
+			break
+		}
+	}
+	if authId == "" {
+		authId = m.defaultAuthId
+	}
+
+	if authId != "" {
+		return m.authMethods[authId], nil
+	}
+	return nil, ErrNoAuthMethod
 }
 
 func (m *Mux) Keepalive(idle time.Duration) {
@@ -199,7 +194,7 @@ func (m *Mux) checkAlive(now time.Time, idle time.Duration) bool {
 		sshs     []*SSH
 		hasAlive bool
 	)
-	m.mu.Lock()
+	m.sshsMu.Lock()
 	for addr, s := range m.sshs {
 		openAt, refs := s.Status()
 		if refs <= 0 && now.Sub(openAt) >= idle {
@@ -209,7 +204,7 @@ func (m *Mux) checkAlive(now time.Time, idle time.Duration) bool {
 			hasAlive = true
 		}
 	}
-	m.mu.Unlock()
+	m.sshsMu.Unlock()
 	for _, s := range sshs {
 		s.Close()
 	}
@@ -231,34 +226,12 @@ func (m *Mux) Close() error {
 	if m.aliveChan != nil {
 		close(m.aliveChan)
 	}
-	m.mu.Lock()
+	m.sshsMu.Lock()
 	for _, s := range m.sshs {
 		s.Close()
 	}
-	m.mu.Unlock()
+	m.sshsMu.Unlock()
 	return nil
-}
-
-func (m *Mux) Gate(addr string) string {
-	for i := range m.gates {
-		if m.gates[i].Matcher(addr) {
-			return m.gates[i].Gate
-		}
-	}
-	return ""
-}
-
-func (m *Mux) Auth(addr string) (*Auth, error) {
-	for i := range m.auths {
-		if m.auths[i].Matcher(addr) {
-			return m.auths[i].Auth, nil
-		}
-	}
-
-	if m.defaultAuth != nil {
-		return m.defaultAuth, nil
-	}
-	return nil, ErrNoAuthMethod
 }
 
 func (m *Mux) Dial(addr string) (*SSH, error) {
@@ -274,8 +247,8 @@ func (m *Mux) Dial(addr string) (*SSH, error) {
 		err error
 	)
 
-	gateAddr := m.Gate(addr)
-	m.mu.RLock()
+	gateAddr := m.AgentGate(addr)
+	m.sshsMu.RLock()
 	agent, has = m.sshs[addr]
 	if !has {
 		if gateAddr != "" {
@@ -287,7 +260,7 @@ func (m *Mux) Dial(addr string) (*SSH, error) {
 	} else {
 		agent = agent.NopClose()
 	}
-	m.mu.RUnlock()
+	m.sshsMu.RUnlock()
 	if agent != nil {
 		return agent, nil
 	}
@@ -306,7 +279,7 @@ func (m *Mux) Dial(addr string) (*SSH, error) {
 }
 
 func (m *Mux) dial(addr string, gate *SSH) (*SSH, error) {
-	auth, err := m.Auth(addr)
+	auth, err := m.AgentAuth(addr)
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +289,7 @@ func (m *Mux) dial(addr string, gate *SSH) (*SSH, error) {
 		return nil, err
 	}
 
-	m.mu.Lock()
+	m.sshsMu.Lock()
 	tmp, has := m.sshs[addr]
 	if has {
 		agent, tmp = tmp, agent
@@ -330,7 +303,7 @@ func (m *Mux) dial(addr string, gate *SSH) (*SSH, error) {
 		}
 	}
 	agent = agent.NopClose()
-	m.mu.Unlock()
+	m.sshsMu.Unlock()
 
 	if tmp != nil {
 		tmp.Close()

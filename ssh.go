@@ -125,6 +125,7 @@ func NewSSH(client *ssh.Client, gate *SSH) (*SSH, error) {
 	}, nil
 }
 
+// Dial create a SSH instance, only first gate was used if it exist and isn't nil
 func Dial(addr string, config *ssh.ClientConfig, gate ...*SSH) (*SSH, error) {
 	if len(gate) > 0 && gate[0] != nil {
 		return gate[0].Dial(addr, config)
@@ -199,6 +200,14 @@ func (s *SSH) NopClose() *SSH {
 	ns := *s
 	ns.nopClose = true
 	return &ns
+}
+
+func (s *SSH) LocalFs() Fs {
+	return s.localFs
+}
+
+func (s *SSH) RemoteFs() Fs {
+	return s.remoteFs
 }
 
 func (s *SSH) checkIsDir(fd File, stat os.FileInfo, err error) (File, error) {
