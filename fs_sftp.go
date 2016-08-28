@@ -75,7 +75,7 @@ func (s FsSftp) MkdirAll(path string, perm os.FileMode) error {
 		if dir.IsDir() {
 			return nil
 		}
-		return &os.PathError{"mkdir", path, syscall.ENOTDIR}
+		return &os.PathError{Op: "mkdir", Path: path, Err: syscall.ENOTDIR}
 	}
 
 	i := len(path)
@@ -111,24 +111,7 @@ func (s FsSftp) Remove(name string) error {
 	return s.sftp.Remove(name)
 }
 
-func (s FsSftp) RemoveAll(path string) error {
-	// Copy from os.RemoveAll
-	err := s.Remove(path)
-	if err == nil || s.IsNotExist(err) {
-		return nil
-	}
-
-	dir, serr := s.Lstat(path)
-	if serr != nil {
-		if serr, ok := serr.(*os.PathError); ok && (s.IsNotExist(serr.Err) || serr.Err == syscall.ENOTDIR) {
-			return nil
-		}
-		return serr
-	}
-	if !dir.IsDir() {
-		return err
-	}
-
+func (s FsSftp) removeDir(path string) error {
 	fd, err := s.Open(path)
 	if err != nil {
 		if s.IsNotExist(err) {
@@ -156,7 +139,6 @@ func (s FsSftp) RemoveAll(path string) error {
 			break
 		}
 	}
-
 	fd.Close()
 
 	err1 := s.Remove(path)
@@ -167,6 +149,27 @@ func (s FsSftp) RemoveAll(path string) error {
 		err = err1
 	}
 	return err
+}
+
+func (s FsSftp) RemoveAll(path string) error {
+	// Copy from os.RemoveAll
+	err := s.Remove(path)
+	if err == nil || s.IsNotExist(err) {
+		return nil
+	}
+
+	dir, serr := s.Lstat(path)
+	if serr != nil {
+		if serr, ok := serr.(*os.PathError); ok && (s.IsNotExist(serr.Err) || serr.Err == syscall.ENOTDIR) {
+			return nil
+		}
+		return serr
+	}
+	if !dir.IsDir() {
+		return err
+	}
+
+	return s.removeDir(path)
 }
 
 func (s FsSftp) Rename(oldpath, newpath string) error {

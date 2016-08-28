@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// Fs is the abstract interface for local and sftp filesystem
 type Fs interface {
 	Chmod(name string, mode os.FileMode) error
 	Chown(name string, uid, gid int) error
@@ -36,6 +37,7 @@ type Fs interface {
 	io.Closer
 }
 
+// File is the abstract interface for local and sftp file
 type File interface {
 	io.Closer
 	Chmod(mode os.FileMode) error

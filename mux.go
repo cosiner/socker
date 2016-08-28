@@ -13,15 +13,22 @@ var (
 	ErrNoAuthMethod = errors.New("no auth method can be applied to agent")
 )
 
+// MuxAuth holds auth and gate configs
 type MuxAuth struct {
-	// <ID, Auth>
+	// AuthMethods holds all auth methods to destination host. The key can be any
+	// string.
 	AuthMethods map[string]*Auth
 
-	// AuthID
+	// DefaultAuth is the default auth method, it must be a key in AuthMethods field,
+	// only used if no auth method is matched for destination, can be empty.
 	DefaultAuth string
-	// <Matcher, AuthID>
+	// AgentAuths define the rule which auth method is used to connect to destination host.
+	// The key is the format of "matcher:matchor", the value must be a key in
+	// AuthMethods field.
 	AgentAuths map[string]string
-	// <Matcher, GateAddr>
+	// AgentGates define the rule which gate is used to connect to destination host.
+	// The key is the format of "matcher:matchor", the value must be an valid "host:port"
+	// like string.
 	AgentGates map[string]string
 }
 
@@ -57,7 +64,7 @@ func (a *MuxAuth) Validate() error {
 
 type muxAuth struct {
 	Matcher
-	AuthId string
+	AuthID string
 }
 
 type muxGate struct {
@@ -66,17 +73,17 @@ type muxGate struct {
 }
 
 type Mux struct {
-	closed int32
+	closed        int32
 
 	authMethods   map[string]*Auth
-	defaultAuthId string
+	defaultAuthID string
 	agents        []muxAuth
 	gates         []muxGate
 
-	sshsMu sync.RWMutex
-	sshs   map[string]*SSH
+	sshsMu        sync.RWMutex
+	sshs          map[string]*SSH
 
-	aliveChan chan struct{}
+	aliveChan     chan struct{}
 }
 
 func NewMux(auth MuxAuth) (*Mux, error) {
@@ -107,10 +114,10 @@ func NewMux(auth MuxAuth) (*Mux, error) {
 		}
 	}
 
-	m.defaultAuthId = auth.DefaultAuth
+	m.defaultAuthID = auth.DefaultAuth
 	m.agents = make([]muxAuth, 0, len(auth.AgentAuths))
-	for addr, authId := range auth.AgentAuths {
-		if addr != "" && authId != "" {
+	for addr, authID := range auth.AgentAuths {
+		if addr != "" && authID != "" {
 			matcher, err := createMatcher(addr)
 			if err != nil {
 				return nil, err
@@ -118,7 +125,7 @@ func NewMux(auth MuxAuth) (*Mux, error) {
 
 			m.agents = append(m.agents, muxAuth{
 				Matcher: matcher,
-				AuthId:  authId,
+				AuthID:  authID,
 			})
 		}
 	}
@@ -139,19 +146,19 @@ func (m *Mux) AgentGate(addr string) string {
 }
 
 func (m *Mux) AgentAuth(addr string) (*Auth, error) {
-	var authId string
+	var authID string
 	for i := range m.agents {
 		if m.agents[i].Matcher(addr) {
-			authId = m.agents[i].AuthId
+			authID = m.agents[i].AuthID
 			break
 		}
 	}
-	if authId == "" {
-		authId = m.defaultAuthId
+	if authID == "" {
+		authID = m.defaultAuthID
 	}
 
-	if authId != "" {
-		return m.authMethods[authId], nil
+	if authID != "" {
+		return m.authMethods[authID], nil
 	}
 	return nil, ErrNoAuthMethod
 }

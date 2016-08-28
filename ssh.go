@@ -180,6 +180,7 @@ func (s *SSH) Status() (openAt time.Time, refs int32) {
 	return s.openAt, atomic.LoadInt32(s._refs)
 }
 
+// Closed should be called only if reference count is zero or it's Cloned by NopClose
 func (s *SSH) Close() {
 	if s.nopClose {
 		s.decrRefs()
@@ -192,6 +193,8 @@ func (s *SSH) Close() {
 	s.conn.Close()
 }
 
+// NopClose create a clone of current SSH instance and increase the reference count.
+// The Close method of returned instance will do nothing but decrease parent reference count.
 func (s *SSH) NopClose() *SSH {
 	s.incrRefs()
 	if s.nopClose {
@@ -457,20 +460,26 @@ func (s *SSH) cmd(cwd, cmd string) string {
 	return fmt.Sprintf("cd %s %s %s", cwd, ChdirSeperator, cmd)
 }
 
+// Rcd will change the base path of relative path applied to remote host
 func (s *SSH) Rcd(cwd string) {
 	s.rcwd = s.rpath(cwd)
 }
 
+// TmpRcd will create an copy of current instance but doesn't change reference count,
+// then call Rcd on it. It should only used for temporary change directory and be
+// quickly destroyed.
 func (s *SSH) TmpRcd(cwd string) *SSH {
 	ns := *s
 	ns.Rcd(cwd)
 	return &ns
 }
 
+// Lcd do the same thing as Rcd but for local host
 func (s *SSH) Lcd(cwd string) {
 	s.lcwd = s.lpath(cwd)
 }
 
+// TmpLcd do the same thing as TmpLcd but for local host
 func (s *SSH) TmpLcd(cwd string) *SSH {
 	ns := *s
 	ns.Lcd(cwd)

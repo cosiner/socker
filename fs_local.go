@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// FsLocal is the wrapper for package os
 type FsLocal struct{}
 
 func (FsLocal) Chmod(name string, mode os.FileMode) error {
