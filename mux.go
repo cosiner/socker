@@ -73,17 +73,17 @@ type muxGate struct {
 }
 
 type Mux struct {
-	closed        int32
+	closed int32
 
 	authMethods   map[string]*Auth
 	defaultAuthID string
 	agents        []muxAuth
 	gates         []muxGate
 
-	sshsMu        sync.RWMutex
-	sshs          map[string]*SSH
+	sshsMu sync.RWMutex
+	sshs   map[string]*SSH
 
-	aliveChan     chan struct{}
+	aliveChan chan struct{}
 }
 
 func NewMux(auth MuxAuth) (*Mux, error) {
