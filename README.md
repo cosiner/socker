@@ -31,7 +31,7 @@ func testSSH(t *testing.T, gate *SSH) {
 	}
 	defer agent.Close()
 
-	testAgent(agent, t)
+	testAgent(t, agent)
 }
 
 func testAgent(t *testing.T, agent *SSH) {

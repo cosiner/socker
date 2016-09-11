@@ -87,7 +87,7 @@ func testSSH(t *testing.T, gate *SSH) {
 	}
 	defer agent.Close()
 
-	testAgent(agent, t)
+	testAgent(t, agent)
 }
 
 func testAgent(t *testing.T, agent *SSH) {
@@ -187,4 +187,11 @@ func TestMux(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+func TestLocalOnly(t *testing.T) {
+	local := LocalOnly()
+
+	out, err := local.TmpLcd("/").Lcmd("ls $DIR", "DIR=`pwd`")
+	t.Log(string(out), err)
 }

@@ -21,7 +21,7 @@ import (
 var (
 	ErrIsDir = errors.New("destination is directory")
 
-	ChdirSeperator = "&&" // or ;
+	CmdSeperator = "&&" // or ;
 )
 
 type Auth struct {
@@ -105,6 +105,14 @@ type SSH struct {
 	gate   *SSH
 	openAt time.Time
 	_refs  *int32
+}
+
+func LocalOnly() *SSH {
+	var refs int32
+	return &SSH{
+		localFs: FsLocal{},
+		_refs:   &refs,
+	}
 }
 
 func NewSSH(client *ssh.Client, gate *SSH) (*SSH, error) {
@@ -238,21 +246,8 @@ func (s *SSH) Rcmd(cmd string, env ...string) ([]byte, error) {
 		return nil, err
 	}
 	defer sess.Close()
-	for _, e := range env {
-		secs := strings.SplitN(e, "=", 2)
-		var k, v string
-		if len(secs) > 0 {
-			k = secs[0]
-		}
-		if len(secs) > 1 {
-			v = secs[1]
-		}
-		err = sess.Setenv(k, v)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return sess.CombinedOutput(s.rcmd(cmd))
+
+	return sess.CombinedOutput(s.rcmd(cmd, strings.Join(env, " ")))
 }
 
 func (s *SSH) cmdBg(cmd, stdout, stderr string) string {
@@ -266,7 +261,7 @@ func (s *SSH) cmdBg(cmd, stdout, stderr string) string {
 }
 
 func (s *SSH) Lcmd(cmd string, env ...string) ([]byte, error) {
-	c := exec.Command("sh", "-c", s.lcmd(cmd))
+	c := exec.Command("sh", "-c", s.lcmd(cmd, strings.Join(env, " ")))
 	if len(env) > 0 {
 		c.Env = append(c.Env, env...)
 	}
@@ -445,19 +440,22 @@ func (s *SSH) exists(fs Fs, path string) (bool, error) {
 	return true, nil
 }
 
-func (s *SSH) rcmd(cmd string) string {
-	return s.cmd(s.rcwd, cmd)
+func (s *SSH) rcmd(cmd, env string) string {
+	return s.cmd(s.rcwd, env, cmd)
 }
 
-func (s *SSH) lcmd(cmd string) string {
-	return s.cmd(s.lcwd, cmd)
+func (s *SSH) lcmd(cmd, env string) string {
+	return s.cmd(s.lcwd, env, cmd)
 }
 
-func (s *SSH) cmd(cwd, cmd string) string {
-	if cwd == "" {
-		return cmd
+func (s *SSH) cmd(cwd, env, cmd string) string {
+	if env != "" {
+		env = "export " + env + " " + CmdSeperator
 	}
-	return fmt.Sprintf("cd %s %s %s", cwd, ChdirSeperator, cmd)
+	if cwd != "" {
+		cwd = "cd " + cwd + " " + CmdSeperator
+	}
+	return cwd + " " + env + " " + cmd
 }
 
 // Rcd will change the base path of relative path applied to remote host
