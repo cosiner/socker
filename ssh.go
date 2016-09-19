@@ -1,6 +1,7 @@
 package socker
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -91,6 +92,9 @@ func (a *Auth) SSHConfig() (*ssh.ClientConfig, error) {
 }
 
 type SSH struct {
+	err       *error
+	cmdOutput *bytes.Buffer
+
 	nopClose bool
 
 	conn *ssh.Client
@@ -120,6 +124,7 @@ func NewSSH(client *ssh.Client, gate *SSH) (*SSH, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	var refs int32
 	return &SSH{
 		conn:     client,
@@ -190,6 +195,9 @@ func (s *SSH) Status() (openAt time.Time, refs int32) {
 
 // Closed should be called only if reference count is zero or it's Cloned by NopClose
 func (s *SSH) Close() {
+	s.err = nil
+	s.cmdOutput = nil
+
 	if s.nopClose {
 		s.decrRefs()
 		return
@@ -199,6 +207,66 @@ func (s *SSH) Close() {
 	}
 	s.sftp.Close()
 	s.conn.Close()
+}
+
+func (s *SSH) CmdOutput() []byte {
+	if s.cmdOutput != nil {
+		return s.cmdOutput.Bytes()
+	}
+	return nil
+}
+
+func (s *SSH) cmdOutToBuffer(out []byte, err error) ([]byte, error) {
+	if s.cmdOutput != nil {
+		s.cmdOutput.Write(out)
+	}
+	return out, err
+}
+
+func (s *SSH) ReserveCmdOutput(buf *bytes.Buffer) *SSH {
+	if buf == nil {
+		s.cmdOutput = bytes.NewBuffer(make([]byte, 0, 1024))
+	} else {
+		s.cmdOutput = buf
+	}
+	return s
+}
+
+func (s *SSH) checkError() error {
+	if s.err != nil {
+		return *s.err
+	}
+	return nil
+}
+
+func (s *SSH) saveError(err error) error {
+	if err != nil && s.err != nil {
+		*s.err = err
+	}
+	return err
+}
+
+func (s *SSH) ReserveError(e *error) *SSH {
+	var err error
+	if e == nil {
+		e = &err
+	}
+
+	s.err = e
+	return s
+}
+
+func (s *SSH) Error() error {
+	if s.err == nil {
+		return nil
+	}
+	return *s.err
+}
+
+func (s *SSH) ClearError() {
+	if s.err != nil {
+		*s.err = nil
+	}
 }
 
 // NopClose create a clone of current SSH instance and increase the reference count.
@@ -241,13 +309,19 @@ func (s *SSH) openFile(fs Fs, path string, flag int, mode os.FileMode) (File, er
 }
 
 func (s *SSH) Rcmd(cmd string, env ...string) ([]byte, error) {
+	err := s.checkError()
+	if err != nil {
+		return nil, s.saveError(err)
+	}
+
 	sess, err := s.conn.NewSession()
 	if err != nil {
-		return nil, err
+		return nil, s.saveError(err)
 	}
 	defer sess.Close()
 
-	return sess.CombinedOutput(s.rcmd(cmd, strings.Join(env, " ")))
+	out, err := s.cmdOutToBuffer(sess.CombinedOutput(s.rcmd(cmd, strings.Join(env, " "))))
+	return out, s.saveError(err)
 }
 
 func (s *SSH) cmdBg(cmd, stdout, stderr string) string {
@@ -261,11 +335,17 @@ func (s *SSH) cmdBg(cmd, stdout, stderr string) string {
 }
 
 func (s *SSH) Lcmd(cmd string, env ...string) ([]byte, error) {
+	err := s.checkError()
+	if err != nil {
+		return nil, s.saveError(err)
+	}
+
 	c := exec.Command("sh", "-c", s.lcmd(cmd, strings.Join(env, " ")))
 	if len(env) > 0 {
 		c.Env = append(c.Env, env...)
 	}
-	return c.CombinedOutput()
+	out, err := s.cmdOutToBuffer(c.CombinedOutput())
+	return out, s.saveError(err)
 }
 
 func (s *SSH) RcmdBg(cmd, stdout, stderr string, env ...string) ([]byte, error) {
@@ -277,23 +357,28 @@ func (s *SSH) LcmdBg(cmd, stdout, stderr string, env ...string) ([]byte, error) 
 }
 
 func (s *SSH) sync(fs, remoteFs Fs, path, remotePath string) error {
-	fd, err := fs.Open(path)
+	err := s.checkError()
 	if err != nil {
 		return err
+	}
+
+	fd, err := fs.Open(path)
+	if err != nil {
+		return s.saveError(err)
 	}
 	defer fd.Close()
 
 	info, err := fs.Stat(path)
 	if err != nil {
-		return err
+		return s.saveError(err)
 	}
 	if !info.IsDir() {
-		return s.syncFile(remoteFs, remotePath, fd, info)
+		return s.saveError(s.syncFile(remoteFs, remotePath, fd, info))
 	}
 
 	dirnames, err := fd.Readdir(-1)
 	if err != nil {
-		return err
+		return s.saveError(err)
 	}
 	for _, dirname := range dirnames {
 		name := dirname.Name()
@@ -336,22 +421,34 @@ func (s *SSH) syncFile(rfs Fs, rpath string, fd io.Reader, stat os.FileInfo) err
 }
 
 func (s *SSH) writeFile(fs Fs, path string, data []byte) error {
-	fd, err := s.openFile(fs, path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	err := s.checkError()
 	if err != nil {
 		return err
 	}
+
+	fd, err := s.openFile(fs, path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return s.saveError(err)
+	}
 	defer fd.Close()
 	_, err = fd.Write(data)
-	return err
+	return s.saveError(err)
 }
 
 func (s *SSH) readFile(fs Fs, path string) ([]byte, error) {
-	fd, err := s.openFile(fs, path, os.O_RDONLY, 0644)
+	err := s.checkError()
 	if err != nil {
 		return nil, err
 	}
+
+	fd, err := s.openFile(fs, path, os.O_RDONLY, 0644)
+	if err != nil {
+		return nil, s.saveError(err)
+	}
 	defer fd.Close()
-	return ioutil.ReadAll(fd)
+
+	data, err := ioutil.ReadAll(fd)
+	return data, s.saveError(err)
 }
 
 func (s *SSH) LwriteFile(path string, data []byte) error {
@@ -377,14 +474,19 @@ func (f byName) Less(i, j int) bool { return f[i].Name() < f[j].Name() }
 func (f byName) Swap(i, j int)      { f[i], f[j] = f[j], f[i] }
 
 func (s *SSH) readdir(fs Fs, path string, n int) ([]os.FileInfo, error) {
+	err := s.checkError()
+	if err != nil {
+		return nil, s.saveError(err)
+	}
+
 	f, err := fs.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, s.saveError(err)
 	}
 	list, err := f.Readdir(n)
 	f.Close()
 	if err != nil {
-		return nil, err
+		return nil, s.saveError(err)
 	}
 	sort.Sort(byName(list))
 	return list, nil
@@ -406,6 +508,18 @@ func (s *SSH) Get(remotePath, path string) error {
 	return s.sync(s.remoteFs, s.localFs, s.rpath(remotePath), s.lpath(path))
 }
 
+func (s *SSH) remove(fs Fs, path string, recursive bool) error {
+	err := s.checkError()
+	if err != nil {
+		return s.saveError(err)
+	}
+
+	if recursive {
+		return s.saveError(fs.RemoveAll(path))
+	}
+	return s.saveError(fs.Remove(path))
+}
+
 func (s *SSH) Rremove(path string, recursive bool) error {
 	return s.remove(s.remoteFs, s.rpath(path), recursive)
 }
@@ -414,11 +528,20 @@ func (s *SSH) Lremove(path string, recursive bool) error {
 	return s.remove(s.localFs, s.lpath(path), recursive)
 }
 
-func (s *SSH) remove(fs Fs, path string, recursive bool) error {
-	if recursive {
-		return fs.RemoveAll(path)
+func (s *SSH) exists(fs Fs, path string) (bool, error) {
+	err := s.checkError()
+	if err != nil {
+		return false, err
 	}
-	return fs.Remove(path)
+
+	_, err = fs.Stat(path)
+	if err != nil {
+		if fs.IsNotExist(err) {
+			err = nil
+		}
+		return false, s.saveError(err)
+	}
+	return true, nil
 }
 
 func (s *SSH) Rexists(path string) (bool, error) {
@@ -427,17 +550,6 @@ func (s *SSH) Rexists(path string) (bool, error) {
 
 func (s *SSH) Lexists(path string) (bool, error) {
 	return s.exists(s.localFs, s.lpath(path))
-}
-
-func (s *SSH) exists(fs Fs, path string) (bool, error) {
-	_, err := fs.Stat(path)
-	if err != nil {
-		if fs.IsNotExist(err) {
-			err = nil
-		}
-		return false, err
-	}
-	return true, nil
 }
 
 func (s *SSH) rcmd(cmd, env string) string {
