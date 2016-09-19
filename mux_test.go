@@ -69,7 +69,7 @@ var sshConfig = (&Auth{User: "root", Password: "root"}).MustSSHConfig()
 func TestGate(t *testing.T) {
 	gate, err := Dial("10.0.1.1", sshConfig)
 	if err != nil {
-		t.Error("dial agent failed:", err)
+		t.Fatal("dial agent failed:", err)
 	}
 	defer gate.Close()
 
@@ -83,7 +83,7 @@ func TestSSH(t *testing.T) {
 func testSSH(t *testing.T, gate *SSH) {
 	agent, err := Dial("192.168.1.1", sshConfig, gate)
 	if err != nil {
-		t.Error("dial agent failed:", err)
+		t.Fatal("dial agent failed:", err)
 	}
 	defer agent.Close()
 
@@ -91,14 +91,19 @@ func testSSH(t *testing.T, gate *SSH) {
 }
 
 func testAgent(t *testing.T, agent *SSH) {
-	output, err := agent.Rcmd("ls -al ~/")
-	_ = output
-	_ = err
+	agent.ReserveCmdOutput(nil).ReserveError(nil)
 
-	_ = agent.Put("~/local", "~/remote")
-	_ = agent.Get("~/remote", "~/local")
+	agent.Rcmd("ls -al ~/")
+	agent.Put("~/local", "~/remote")
+	agent.Get("~/remote", "~/local")
 
-	_, _ = agent.RcmdBg("sleep 30", "sleep.out", "sleep.err")
+	agent.RcmdBg("sleep 30", "sleep.out", "sleep.err")
+
+	t.Log(string(agent.CmdOutput()))
+	err := agent.Error()
+	if err != nil {
+		t.Error(err)
+	}
 }
 
 func TestMux(t *testing.T) {
