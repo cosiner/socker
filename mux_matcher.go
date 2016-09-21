@@ -14,17 +14,18 @@ type (
 )
 
 var (
-	builders   = make(map[string]MatcherBuilder)
-	buildersMu sync.RWMutex
+	builders          = make(map[string]MatcherBuilder)
+	builderPriorities = make(map[string]int)
+	buildersMu        sync.RWMutex
 )
 
 func init() {
-	RegisterMatchBuilder("regexp", matchRegexp)
-	RegisterMatchBuilder("ipnet", matchIPNet)
-	RegisterMatchBuilder("plain", matchPlain)
+	RegisterMatchBuilder("plain", matchPlain, 100)
+	RegisterMatchBuilder("regexp", matchRegexp, 50)
+	RegisterMatchBuilder("ipnet", matchIPNet, 0)
 }
 
-func RegisterMatchBuilder(name string, builder MatcherBuilder) (replaced bool) {
+func RegisterMatchBuilder(name string, builder MatcherBuilder, priority int) (replaced bool) {
 	if builder == nil {
 		panic("socker: Register builder is nil")
 	}
@@ -32,18 +33,29 @@ func RegisterMatchBuilder(name string, builder MatcherBuilder) (replaced bool) {
 	buildersMu.Lock()
 	_, has := builders[name]
 	builders[name] = builder
+	builderPriorities[name] = priority
 	buildersMu.Unlock()
 	return has
 }
 
-func getMatcherBuilder(name string) MatcherBuilder {
-	buildersMu.RLock()
-	builder := builders[name]
-	buildersMu.RUnlock()
-	return builder
+func ResetMatcherPriority(name string, priority int) {
+	buildersMu.Lock()
+	_, has := builders[name]
+	if has {
+		builderPriorities[name] = priority
+	}
+	buildersMu.Unlock()
 }
 
-func createMatcher(addr string) (Matcher, error) {
+func getMatcherBuilder(name string) (MatcherBuilder, int) {
+	buildersMu.RLock()
+	builder := builders[name]
+	priority := builderPriorities[name]
+	buildersMu.RUnlock()
+	return builder, priority
+}
+
+func createMatcher(addr string) (Matcher, int, error) {
 	var (
 		builderName string
 		matchAddr   string
@@ -57,15 +69,15 @@ func createMatcher(addr string) (Matcher, error) {
 		matchAddr = addr[index+1:]
 	}
 
-	builder := getMatcherBuilder(builderName)
+	builder, priority := getMatcherBuilder(builderName)
 	if builder == nil {
-		return nil, fmt.Errorf("builder %s is not registered", builderName)
+		return nil, 0, fmt.Errorf("builder %s is not registered", builderName)
 	}
 	matcher, err := builder(matchAddr)
 	if err != nil {
-		return nil, fmt.Errorf("create matcher for addr %s failed: %s", addr, err.Error())
+		return nil, 0, fmt.Errorf("create matcher for addr %s failed: %s", addr, err.Error())
 	}
-	return matcher, nil
+	return matcher, priority, nil
 }
 
 func matchRegexp(addr string) (Matcher, error) {

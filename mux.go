@@ -3,6 +3,7 @@ package socker
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -62,14 +63,24 @@ func (a *MuxAuth) Validate() error {
 	return nil
 }
 
-type muxAuth struct {
+type priorityMatcher struct {
+	Priority int
 	Matcher
-	AuthID string
+	Value string
 }
 
-type muxGate struct {
-	Matcher
-	GateAddr string
+type byPriority []priorityMatcher
+
+func (b byPriority) Len() int {
+	return len(b)
+}
+
+func (b byPriority) Less(i, j int) bool {
+	return b[i].Priority > b[j].Priority
+}
+
+func (b byPriority) Swap(i, j int) {
+	b[i], b[j] = b[j], b[i]
 }
 
 type Mux struct {
@@ -77,8 +88,8 @@ type Mux struct {
 
 	authMethods   map[string]*Auth
 	defaultAuthID string
-	agents        []muxAuth
-	gates         []muxGate
+	agents        []priorityMatcher
+	gates         []priorityMatcher
 
 	sshsMu sync.RWMutex
 	sshs   map[string]*SSH
@@ -100,59 +111,62 @@ func NewMux(auth MuxAuth) (*Mux, error) {
 		}
 	}
 
-	m.gates = make([]muxGate, 0, len(auth.AgentGates))
+	m.gates = make([]priorityMatcher, 0, len(auth.AgentGates))
 	for addr, gate := range auth.AgentGates {
 		if addr != "" && gate != "" {
-			matcher, err := createMatcher(addr)
+			matcher, priority, err := createMatcher(addr)
 			if err != nil {
 				return nil, err
 			}
-			m.gates = append(m.gates, muxGate{
+			m.gates = append(m.gates, priorityMatcher{
 				Matcher:  matcher,
-				GateAddr: gate,
+				Priority: priority,
+				Value:    gate,
 			})
 		}
 	}
+	sort.Sort(byPriority(m.gates))
 
 	m.defaultAuthID = auth.DefaultAuth
-	m.agents = make([]muxAuth, 0, len(auth.AgentAuths))
+	m.agents = make([]priorityMatcher, 0, len(auth.AgentAuths))
 	for addr, authID := range auth.AgentAuths {
 		if addr != "" && authID != "" {
-			matcher, err := createMatcher(addr)
+			matcher, priority, err := createMatcher(addr)
 			if err != nil {
 				return nil, err
 			}
 
-			m.agents = append(m.agents, muxAuth{
-				Matcher: matcher,
-				AuthID:  authID,
+			m.agents = append(m.agents, priorityMatcher{
+				Matcher:  matcher,
+				Priority: priority,
+				Value:    authID,
 			})
 		}
 	}
+	sort.Sort(byPriority(m.agents))
 
 	m.sshs = make(map[string]*SSH)
 	return &m, nil
 }
 
-func (m *Mux) AgentGate(addr string) string {
-	var gate string
-	for i := range m.gates {
-		if m.gates[i].Matcher(addr) {
-			gate = m.gates[i].GateAddr
+func (m *Mux) match(matchers []priorityMatcher, addr string) string {
+	var val string
+	for i := range matchers {
+		if matchers[i].Matcher(addr) {
+			val = matchers[i].Value
 			break
 		}
 	}
+	return val
+}
+
+func (m *Mux) AgentGate(addr string) string {
+	gate := m.match(m.gates, addr)
 	return gate
 }
 
 func (m *Mux) AgentAuth(addr string) (*Auth, error) {
-	var authID string
-	for i := range m.agents {
-		if m.agents[i].Matcher(addr) {
-			authID = m.agents[i].AuthID
-			break
-		}
-	}
+	authID := m.match(m.agents, addr)
 	if authID == "" {
 		authID = m.defaultAuthID
 	}

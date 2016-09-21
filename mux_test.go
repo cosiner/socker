@@ -64,6 +64,29 @@ func TestMatchIPNet(t *testing.T) {
 	}
 }
 
+func TestPriority(t *testing.T) {
+	gates := map[string]string{
+		"ipnet:127.0.0.0/16":       "ipnet",
+		"plain:127.0.0.1:22":       "plain",
+		"regexp:127.0.0.\\d+:\\d+": "regexp",
+	}
+	m, err := NewMux(MuxAuth{
+		AgentGates: gates,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.AgentGate("127.0.0.1:22") != "plain" {
+		t.Fatal("match failed")
+	}
+	if m.AgentGate("127.0.0.2:22") != "regexp" {
+		t.Fatal("match failed")
+	}
+	if m.AgentGate("127.0.1.3:22") != "ipnet" {
+		t.Fatal("match failed")
+	}
+}
+
 var sshConfig = (&Auth{User: "root", Password: "root"}).MustSSHConfig()
 
 func TestGate(t *testing.T) {
