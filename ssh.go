@@ -22,7 +22,8 @@ import (
 var (
 	ErrIsDir = errors.New("destination is directory")
 
-	CmdSeperator = "&&" // or ;
+	CopyBufferSize int64 = 1024 * 1024
+	CmdSeperator         = "&&" // or ;
 )
 
 type Auth struct {
@@ -413,7 +414,11 @@ func (s *SSH) syncFile(rfs Fs, rpath string, fd io.Reader, stat os.FileInfo) err
 	}
 	defer rfd.Close()
 
-	_, err = io.Copy(rfd, fd)
+	bufsize := stat.Size()
+	if bufsize > CopyBufferSize {
+		bufsize = CopyBufferSize
+	}
+	_, err = io.CopyBuffer(rfd, fd, make([]byte, 0, bufsize))
 	if err == io.EOF {
 		err = nil
 	}
