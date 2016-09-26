@@ -418,7 +418,7 @@ func (s *SSH) syncFile(rfs Fs, rpath string, fd io.Reader, stat os.FileInfo) err
 	if bufsize > CopyBufferSize {
 		bufsize = CopyBufferSize
 	}
-	_, err = io.CopyBuffer(rfd, fd, make([]byte, 0, bufsize))
+	_, err = io.CopyBuffer(rfd, fd, make([]byte, bufsize))
 	if err == io.EOF {
 		err = nil
 	}
