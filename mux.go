@@ -287,7 +287,7 @@ func (m *Mux) Dial(addr string) (*SSH, error) {
 	}
 
 	if gate == nil && gateAddr != "" {
-		gate, err = m.dial(gateAddr, nil)
+		gate, err = m.Dial(gateAddr)
 		if err != nil {
 			return nil, err
 		}
