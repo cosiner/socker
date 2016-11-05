@@ -87,10 +87,10 @@ func TestPriority(t *testing.T) {
 	}
 }
 
-var sshConfig = (&Auth{User: "root", Password: "root"}).MustSSHConfig()
+var auth = &Auth{User: "root", Password: "root"}
 
 func TestGate(t *testing.T) {
-	gate, err := Dial("10.0.1.1", sshConfig)
+	gate, err := Dial("10.0.1.1", auth)
 	if err != nil {
 		t.Fatal("dial agent failed:", err)
 	}
@@ -104,7 +104,7 @@ func TestSSH(t *testing.T) {
 }
 
 func testSSH(t *testing.T, gate *SSH) {
-	agent, err := Dial("192.168.1.1", sshConfig, gate)
+	agent, err := Dial("192.168.1.1", auth, gate)
 	if err != nil {
 		t.Fatal("dial agent failed:", err)
 	}

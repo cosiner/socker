@@ -305,7 +305,7 @@ func (m *Mux) dial(addr string, gate *SSH) (*SSH, error) {
 		return nil, err
 	}
 
-	agent, err := Dial(addr, auth.MustSSHConfig(), gate)
+	agent, err := Dial(addr, auth, gate)
 	if err != nil {
 		return nil, err
 	}

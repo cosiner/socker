@@ -32,6 +32,9 @@ type Auth struct {
 	PrivateKey     string
 	PrivateKeyFile string
 
+	TimeoutMs  int
+	MaxSession int
+
 	config *ssh.ClientConfig
 }
 
@@ -88,9 +91,12 @@ func (a *Auth) SSHConfig() (*ssh.ClientConfig, error) {
 	if len(config.Auth) == 0 {
 		return nil, errors.New("no auth method supplied")
 	}
+	config.Timeout = time.Duration(a.TimeoutMs) * time.Millisecond
 	a.config = config
 	return a.config, nil
 }
+
+var ErrConnClosed = errors.New("connection closed")
 
 type SSH struct {
 	err       *error
@@ -98,8 +104,9 @@ type SSH struct {
 
 	nopClose bool
 
-	conn *ssh.Client
-	sftp *sftp.Client
+	conn        *ssh.Client
+	sftp        *sftp.Client
+	sessionPool *sessionPool
 
 	remoteFs Fs
 	localFs  Fs
@@ -120,7 +127,7 @@ func LocalOnly() *SSH {
 	}
 }
 
-func NewSSH(client *ssh.Client, gate *SSH) (*SSH, error) {
+func NewSSH(client *ssh.Client, maxSession int, gate *SSH) (*SSH, error) {
 	sftpClient, err := sftp.NewClient(client)
 	if err != nil {
 		return nil, err
@@ -128,8 +135,10 @@ func NewSSH(client *ssh.Client, gate *SSH) (*SSH, error) {
 
 	var refs int32
 	return &SSH{
-		conn:     client,
-		sftp:     sftpClient,
+		conn:        client,
+		sftp:        sftpClient,
+		sessionPool: newSessionPool(maxSession),
+
 		remoteFs: NewFsSftp(sftpClient),
 		localFs:  FsLocal{},
 
@@ -140,9 +149,13 @@ func NewSSH(client *ssh.Client, gate *SSH) (*SSH, error) {
 }
 
 // Dial create a SSH instance, only first gate was used if it exist and isn't nil
-func Dial(addr string, config *ssh.ClientConfig, gate ...*SSH) (*SSH, error) {
+func Dial(addr string, auth *Auth, gate ...*SSH) (*SSH, error) {
 	if len(gate) > 0 && gate[0] != nil {
-		return gate[0].Dial(addr, config)
+		return gate[0].Dial(addr, auth)
+	}
+	config, err := auth.SSHConfig()
+	if err != nil {
+		return nil, err
 	}
 
 	client, err := ssh.Dial("tcp", addr, config)
@@ -150,7 +163,7 @@ func Dial(addr string, config *ssh.ClientConfig, gate ...*SSH) (*SSH, error) {
 		return nil, err
 	}
 
-	s, err := NewSSH(client, nil)
+	s, err := NewSSH(client, auth.MaxSession, nil)
 	if err != nil {
 		client.Close()
 		return nil, err
@@ -162,11 +175,16 @@ func (s *SSH) DialConn(net, addr string) (net.Conn, error) {
 	return s.conn.Dial(net, addr)
 }
 
-func (s *SSH) Dial(addr string, config *ssh.ClientConfig) (*SSH, error) {
+func (s *SSH) Dial(addr string, auth *Auth) (*SSH, error) {
 	conn, err := s.conn.Dial("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
+	config, err := auth.SSHConfig()
+	if err != nil {
+		return nil, err
+	}
+
 	c, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
 	if err != nil {
 		conn.Close()
@@ -174,7 +192,7 @@ func (s *SSH) Dial(addr string, config *ssh.ClientConfig) (*SSH, error) {
 	}
 
 	client := ssh.NewClient(c, chans, reqs)
-	ssh, err := NewSSH(client, s.NopClose())
+	ssh, err := NewSSH(client, auth.MaxSession, s.NopClose())
 	if err != nil {
 		client.Close()
 		return nil, err
@@ -194,11 +212,14 @@ func (s *SSH) Status() (openAt time.Time, refs int32) {
 	return s.openAt, atomic.LoadInt32(s._refs)
 }
 
-// Closed should be called only if reference count is zero or it's Cloned by NopClose
-func (s *SSH) Close() {
+func (s *SSH) clean() {
 	s.err = nil
 	s.cmdOutput = nil
+}
 
+// Closed should be called only if reference count is zero or it's Cloned by NopClose
+func (s *SSH) Close() {
+	s.clean()
 	if s.nopClose {
 		s.decrRefs()
 		return
@@ -206,6 +227,7 @@ func (s *SSH) Close() {
 	if s.gate != nil {
 		s.gate.decrRefs()
 	}
+	s.sessionPool.Close()
 	s.sftp.Close()
 	s.conn.Close()
 }
@@ -278,7 +300,10 @@ func (s *SSH) NopClose() *SSH {
 		return s
 	}
 	ns := *s
+
+	ns.clean()
 	ns.nopClose = true
+
 	return &ns
 }
 
@@ -315,14 +340,33 @@ func (s *SSH) Rcmd(cmd string, env ...string) ([]byte, error) {
 		return nil, s.saveError(err)
 	}
 
-	sess, err := s.conn.NewSession()
-	if err != nil {
-		return nil, s.saveError(err)
-	}
-	defer sess.Close()
+	for {
+		session, ok := s.sessionPool.Take()
+		if !ok {
+			return nil, ErrConnClosed
+		}
 
-	out, err := s.cmdOutToBuffer(sess.CombinedOutput(s.rcmd(cmd, strings.Join(env, " "))))
-	return out, s.saveError(err)
+		sess, err := s.conn.NewSession()
+		if err != nil {
+			if chanErr, ok := err.(*ssh.OpenChannelError); ok {
+				if chanErr.Reason == ssh.Prohibited {
+					session.Drop()
+					continue
+				}
+			}
+
+			session.Release()
+			return nil, s.saveError(err)
+		}
+
+		defer func() {
+			sess.Close()
+			session.Release()
+		}()
+
+		out, err := s.cmdOutToBuffer(sess.CombinedOutput(s.rcmd(cmd, strings.Join(env, " "))))
+		return out, s.saveError(err)
+	}
 }
 
 func (s *SSH) cmdBg(cmd, stdout, stderr string) string {
