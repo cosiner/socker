@@ -77,6 +77,7 @@ func TestMux(t *testing.T) {
 			"plain:" + gateBar:     netBar,
 			"ipnet:192.168.2.0/24": netBar,
 		},
+		KeepAliveSeconds: 30,
 	}
 
 	mux, err := NewMux(auth)
@@ -115,8 +116,6 @@ func TestMux(t *testing.T) {
 		}
 	}
 	defer mux.Close()
-
-	mux.Keepalive(time.Second * 10)
 
 	var wg sync.WaitGroup
 	for _, addr := range []string{"192.168.1.2:22", "192.168.2.2:22"} {
