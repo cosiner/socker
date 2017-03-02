@@ -9,71 +9,76 @@ import (
 )
 
 type (
-	Matcher        func(addr string) bool
-	MatcherBuilder func(string) (Matcher, error)
+	Matcher   func(addr string) bool
+	MatchRule func(string) (Matcher, error)
 )
 
 var (
-	builders          = make(map[string]MatcherBuilder)
-	builderPriorities = make(map[string]int)
-	buildersMu        sync.RWMutex
+	rules          = make(map[string]MatchRule)
+	rulePriorities = make(map[string]int)
+	rulesMu        sync.RWMutex
+)
+
+const (
+	RulePlain  = "plain"
+	RuleRegexp = "regexp"
+	RuleIpnet  = "ipnet"
 )
 
 func init() {
-	RegisterMatchBuilder("plain", matchPlain, 100)
-	RegisterMatchBuilder("regexp", matchRegexp, 50)
-	RegisterMatchBuilder("ipnet", matchIPNet, 0)
+	RegisterMatchRule(RulePlain, matchPlain, 100)
+	RegisterMatchRule(RuleRegexp, matchRegexp, 50)
+	RegisterMatchRule(RuleIpnet, matchIPNet, 0)
 }
 
-func RegisterMatchBuilder(name string, builder MatcherBuilder, priority int) (replaced bool) {
-	if builder == nil {
-		panic("socker: Register builder is nil")
+func RegisterMatchRule(name string, rule MatchRule, priority int) (replaced bool) {
+	if rule == nil {
+		panic("socker: match rule is nil")
 	}
 
-	buildersMu.Lock()
-	_, has := builders[name]
-	builders[name] = builder
-	builderPriorities[name] = priority
-	buildersMu.Unlock()
+	rulesMu.Lock()
+	_, has := rules[name]
+	rules[name] = rule
+	rulePriorities[name] = priority
+	rulesMu.Unlock()
 	return has
 }
 
-func ResetMatcherPriority(name string, priority int) {
-	buildersMu.Lock()
-	_, has := builders[name]
+func ResetRulePriority(name string, priority int) {
+	rulesMu.Lock()
+	_, has := rules[name]
 	if has {
-		builderPriorities[name] = priority
+		rulePriorities[name] = priority
 	}
-	buildersMu.Unlock()
+	rulesMu.Unlock()
 }
 
-func getMatcherBuilder(name string) (MatcherBuilder, int) {
-	buildersMu.RLock()
-	builder := builders[name]
-	priority := builderPriorities[name]
-	buildersMu.RUnlock()
-	return builder, priority
-}
-
-func createMatcher(addr string) (Matcher, int, error) {
-	var (
-		builderName string
-		matchAddr   string
-	)
-	index := strings.IndexByte(addr, ':')
+func SplitRuleAndAddr(s string) (rule, addr string) {
+	index := strings.IndexByte(s, ':')
 	if index < 0 {
-		builderName = "plain"
-		matchAddr = addr
-	} else {
-		builderName = addr[:index]
-		matchAddr = addr[index+1:]
+		return RulePlain, s
 	}
+	return s[:index], s[index+1:]
+}
 
-	builder, priority := getMatcherBuilder(builderName)
-	if builder == nil {
-		return nil, 0, fmt.Errorf("builder %s is not registered", builderName)
+func JoinRuleAndAddr(rule, addr string) string {
+	return rule + ":" + addr
+}
+
+func getMatchRule(name string) (MatchRule, int) {
+	rulesMu.RLock()
+	rule := rules[name]
+	priority := rulePriorities[name]
+	rulesMu.RUnlock()
+	return rule, priority
+}
+
+func createMatcher(ruleName, addr string) (Matcher, int, error) {
+	rule, priority := getMatchRule(ruleName)
+	if rule == nil {
+		return nil, 0, fmt.Errorf("rule %s is not registered", ruleName)
 	}
-	matcher, err := builder(matchAddr)
+	matcher, err := rule(addr)
 	if err != nil {
 		return nil, 0, fmt.Errorf("create matcher for addr %s failed: %s", addr, err.Error())
 	}

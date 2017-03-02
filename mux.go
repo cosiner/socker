@@ -117,7 +117,7 @@ func NewMux(auth MuxAuth) (*Mux, error) {
 	m.gates = make([]priorityMatcher, 0, len(auth.AgentGates))
 	for addr, gate := range auth.AgentGates {
 		if addr != "" && gate != "" {
-			matcher, priority, err := createMatcher(addr)
+			matcher, priority, err := createMatcher(SplitRuleAndAddr(addr))
 			if err != nil {
 				return nil, err
 			}
@@ -134,7 +134,7 @@ func NewMux(auth MuxAuth) (*Mux, error) {
 	m.agents = make([]priorityMatcher, 0, len(auth.AgentAuths))
 	for addr, authID := range auth.AgentAuths {
 		if addr != "" && authID != "" {
-			matcher, priority, err := createMatcher(addr)
+			matcher, priority, err := createMatcher(SplitRuleAndAddr(addr))
 			if err != nil {
 				return nil, err
 			}
