@@ -195,7 +195,7 @@ func TestMux(t *testing.T) {
 	}
 	defer mux.Close()
 
-	mux.Keepalive(time.Second * 10)
+	mux.keepAlive(time.Second * 10)
 
 	var wg sync.WaitGroup
 	for _, addr := range []string{"192.168.1.2:22", "192.168.2.2:22"} {

@@ -7,9 +7,9 @@ import (
 )
 
 const (
-	_SESSION_STATUS_EFFECTIVE int32 = iota
-	_SESSION_STATUS_RELEASED
-	_SESSION_STATUS_DROP
+	sessionActive int32 = iota
+	sessionIdle
+	sessionInvalid
 )
 
 type session struct {
@@ -18,14 +18,14 @@ type session struct {
 }
 
 func (s *session) Release() {
-	if !atomic.CompareAndSwapInt32(&s.status, _SESSION_STATUS_EFFECTIVE, _SESSION_STATUS_RELEASED) {
+	if !atomic.CompareAndSwapInt32(&s.status, sessionActive, sessionIdle) {
 		return
 	}
 	s.pool.put(s)
 }
 
 func (s *session) Drop() {
-	if !atomic.CompareAndSwapInt32(&s.status, _SESSION_STATUS_EFFECTIVE, _SESSION_STATUS_DROP) {
+	if !atomic.CompareAndSwapInt32(&s.status, sessionActive, sessionInvalid) {
 		return
 	}
 }
@@ -46,11 +46,11 @@ func initPoolChan(size int) chan struct{} {
 }
 
 func newSessionPool(size int) *sessionPool {
-	const DEFAULT_MAX_SESSION = 10
+	const defaultMaxSession = 10
 
 	var c chan struct{}
 	if size == 0 {
-		size = DEFAULT_MAX_SESSION
+		size = defaultMaxSession
 	}
 	if size > 0 {
 		c = initPoolChan(size)
@@ -92,7 +92,7 @@ func (p *sessionPool) takeWithTimeout() bool {
 
 func (p *sessionPool) Take() (*session, bool) {
 	if p.size <= 0 {
-		return &session{pool: p, status: _SESSION_STATUS_EFFECTIVE}, true
+		return &session{pool: p, status: sessionActive}, true
 	}
 
 	if p.c != nil {
@@ -104,7 +104,7 @@ func (p *sessionPool) Take() (*session, bool) {
 		}
 		p.mu.RUnlock()
 		if taken {
-			return &session{pool: p, status: _SESSION_STATUS_EFFECTIVE}, true
+			return &session{pool: p, status: sessionActive}, true
 		}
 	}
 

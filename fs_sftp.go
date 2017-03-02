@@ -11,11 +11,42 @@ import (
 )
 
 type FsSftp struct {
-	sftp *sftp.Client
+	sftp  *sftp.Client
+	fpath Filepath
 }
 
 func NewFsSftp(sftp *sftp.Client) Fs {
-	return FsSftp{sftp: sftp}
+	fs := FsSftp{sftp: sftp}
+	_, err := fs.Stat("/")
+
+	var (
+		separator     uint8
+		listSeparator uint8
+	)
+	if err == nil && fs.IsNotExist(err) {
+		// windows
+		separator = '\\'
+		listSeparator = ';'
+	} else {
+		// unix
+		separator = '/'
+		listSeparator = ':'
+	}
+	if separator == os.PathSeparator {
+		fs.fpath = localFilepath{}
+	} else {
+		fs.fpath = virtualFilepath{
+			PathSeparator:     separator,
+			PathListSeparator: listSeparator,
+			IsUnix:            separator == '/',
+			Getwd:             sftp.Getwd,
+		}
+	}
+	return fs
+}
+
+func (s FsSftp) Filepath() Filepath {
+	return s.fpath
 }
 
 func (s FsSftp) Chmod(name string, mode os.FileMode) error {
@@ -52,10 +83,6 @@ func (s FsSftp) IsNotExist(err error) bool {
 	return strings.Contains(err.Error(), "not exist") || os.IsNotExist(err)
 }
 
-func (s FsSftp) IsPathSeparator(c uint8) bool {
-	return os.IsPathSeparator(c)
-}
-
 func (s FsSftp) IsPermission(err error) bool {
 	return os.IsPermission(err)
 }
@@ -79,11 +106,11 @@ func (s FsSftp) MkdirAll(path string, perm os.FileMode) error {
 	}
 
 	i := len(path)
-	for i > 0 && os.IsPathSeparator(path[i-1]) { // Skip trailing path separator.
+	for i > 0 && s.fpath.IsPathSeparator(path[i-1]) { // Skip trailing path separator.
 		i--
 	}
 	j := i
-	for j > 0 && !os.IsPathSeparator(path[j-1]) { // Scan backward over element.
+	for j > 0 && !s.fpath.IsPathSeparator(path[j-1]) { // Scan backward over element.
 		j--
 	}
 	if j > 1 {
@@ -120,11 +147,12 @@ func (s FsSftp) removeDir(path string) error {
 		return err
 	}
 
+	separator := s.fpath.Separator()
 	err = nil
 	for {
 		names, err1 := fd.Readdirnames(100)
 		for _, name := range names {
-			err1 := s.RemoveAll(path + string(os.PathSeparator) + name)
+			err1 := s.RemoveAll(path + string(separator) + name)
 			if err == nil {
 				err = err1
 			}
@@ -266,6 +294,7 @@ func (f *fileSftp) Readdirnames(n int) (names []string, err error) {
 	}
 	return names, nil
 }
+
 func (f *fileSftp) WriteString(s string) (n int, err error) {
 	return f.File.Write([]byte(s))
 }

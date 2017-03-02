@@ -8,6 +8,8 @@ import (
 
 // Fs is the abstract interface for local and sftp filesystem
 type Fs interface {
+	Filepath() Filepath
+
 	Chmod(name string, mode os.FileMode) error
 	Chown(name string, uid, gid int) error
 	Chtimes(name string, atime time.Time, mtime time.Time) error
@@ -15,7 +17,7 @@ type Fs interface {
 	Getwd() (dir string, err error)
 	IsExist(err error) bool
 	IsNotExist(err error) bool
-	IsPathSeparator(c uint8) bool
+
 	IsPermission(err error) bool
 	Mkdir(name string, perm os.FileMode) error
 	MkdirAll(path string, perm os.FileMode) error

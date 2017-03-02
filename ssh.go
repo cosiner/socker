@@ -9,7 +9,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -425,9 +424,11 @@ func (s *SSH) sync(fs, remoteFs Fs, path, remotePath string) error {
 	if err != nil {
 		return s.saveError(err)
 	}
+
+	lfpath, rfpath := fs.Filepath(), remoteFs.Filepath()
 	for _, dirname := range dirnames {
 		name := dirname.Name()
-		err = s.sync(fs, remoteFs, filepath.Join(path, name), filepath.Join(remotePath, name))
+		err = s.sync(fs, remoteFs, lfpath.Join(path, name), rfpath.Join(remotePath, name))
 		if err != nil {
 			return err
 		}
@@ -442,8 +443,9 @@ func (s *SSH) syncFile(rfs Fs, rpath string, fd io.Reader, stat os.FileInfo) err
 		return err
 	}
 
-	dir, _ := filepath.Split(rpath)
-	dir = filepath.FromSlash(dir)
+	rfpath := rfs.Filepath()
+	dir, _ := rfpath.Split(rpath)
+	dir = rfpath.FromSlash(dir)
 
 	if dir != "" {
 		err = rfs.MkdirAll(dir, 0755)
@@ -646,16 +648,16 @@ func (s *SSH) TmpLcd(cwd string) *SSH {
 }
 
 func (s *SSH) rpath(path string) string {
-	return s.path(s.rcwd, path)
+	return s.path(s.remoteFs.Filepath(), s.rcwd, path)
 }
 
 func (s *SSH) lpath(path string) string {
-	return s.path(s.lcwd, path)
+	return s.path(s.localFs.Filepath(), s.lcwd, path)
 }
 
-func (s *SSH) path(base, cwd string) string {
-	if filepath.IsAbs(cwd) {
+func (s *SSH) path(fpath Filepath, base, cwd string) string {
+	if fpath.IsAbs(cwd) {
 		return cwd
 	}
-	return filepath.Join(base, cwd)
+	return fpath.Join(base, cwd)
 }

@@ -6,7 +6,15 @@ import (
 )
 
 // FsLocal is the wrapper for package os
-type FsLocal struct{}
+type FsLocal struct {
+	localFilepath
+}
+
+var fsLocal Fs = FsLocal{}
+
+func (f FsLocal) Filepath() Filepath {
+	return f
+}
 
 func (FsLocal) Chmod(name string, mode os.FileMode) error {
 	return os.Chmod(name, mode)
@@ -30,10 +38,6 @@ func (FsLocal) IsExist(err error) bool {
 
 func (FsLocal) IsNotExist(err error) bool {
 	return os.IsNotExist(err)
-}
-
-func (FsLocal) IsPathSeparator(c uint8) bool {
-	return os.IsPathSeparator(c)
 }
 
 func (FsLocal) IsPermission(err error) bool {

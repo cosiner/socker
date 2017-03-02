@@ -31,6 +31,9 @@ type MuxAuth struct {
 	// The key is the format of "matcher:matchor", the value must be an valid "host:port"
 	// like string.
 	AgentGates map[string]string
+
+	// KeepAliveSeconds limit the lifetime of idle ssh connection, default is 300.
+	KeepAliveSeconds int
 }
 
 func (a *MuxAuth) checkAuth(id string, auth *Auth) error {
@@ -146,6 +149,12 @@ func NewMux(auth MuxAuth) (*Mux, error) {
 	sort.Sort(byPriority(m.agents))
 
 	m.sshs = make(map[string]*SSH)
+
+	const defaultKeepAliveSeconds = 300
+	if auth.KeepAliveSeconds <= 0 {
+		auth.KeepAliveSeconds = defaultKeepAliveSeconds
+	}
+	m.keepAlive(time.Duration(auth.KeepAliveSeconds) * defaultKeepAliveSeconds)
 	return &m, nil
 }
 
@@ -177,7 +186,7 @@ func (m *Mux) AgentAuth(addr string) (*Auth, error) {
 	return nil, ErrNoAuthMethod
 }
 
-func (m *Mux) Keepalive(idle time.Duration) {
+func (m *Mux) keepAlive(idle time.Duration) {
 	m.aliveChan = make(chan struct{}, 1)
 	go func() {
 		var (
