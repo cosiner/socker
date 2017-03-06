@@ -40,7 +40,7 @@ type Auth struct {
 func (a *Auth) privateKeyMethod(pemBytes []byte) (ssh.AuthMethod, error) {
 	sign, err := ssh.ParsePrivateKey(pemBytes)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid private key: %s", err.Error())
 	}
 	return ssh.PublicKeys(sign), nil
 }
@@ -79,7 +79,7 @@ func (a *Auth) SSHConfig() (*ssh.ClientConfig, error) {
 		defer fd.Close()
 		pemBytes, err := ioutil.ReadAll(fd)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("invalid private key file: %s", err.Error())
 		}
 		method, err := a.privateKeyMethod(pemBytes)
 		if err != nil {
