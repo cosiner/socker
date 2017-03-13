@@ -23,7 +23,7 @@ func NewFsSftp(sftp *sftp.Client) Fs {
 		separator     uint8
 		listSeparator uint8
 	)
-	if err == nil || fs.IsNotExist(err) {
+	if err != nil && fs.IsNotExist(err) {
 		// windows
 		separator = '\\'
 		listSeparator = ';'
@@ -222,6 +222,7 @@ func (s FsSftp) Create(name string) (File, error) {
 
 func (s FsSftp) Open(name string) (File, error) {
 	fd, err := s.sftp.Open(name)
+
 	return s.newFile(name, fd, err)
 }
 
