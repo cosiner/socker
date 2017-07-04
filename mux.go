@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 )
 
 var (
@@ -34,6 +36,18 @@ type MuxAuth struct {
 
 	// KeepAliveSeconds limit the lifetime of idle ssh connection, default is 300.
 	KeepAliveSeconds int
+}
+
+// ApplyDefaultHostCheck apply the checking function or ssh.InsecureIgnoreHostKey to each Auth instance.
+func (a *MuxAuth) ApplyDefaultHostCheck(check ssh.HostKeyCallback) {
+	if check == nil {
+		check = ssh.InsecureIgnoreHostKey()
+	}
+	for _, auth := range a.AuthMethods {
+		if auth.HostKeyCheck == nil {
+			auth.HostKeyCheck = check
+		}
+	}
 }
 
 func (a *MuxAuth) checkAuth(id string, auth *Auth) error {
@@ -101,6 +115,8 @@ type Mux struct {
 }
 
 func NewMux(auth MuxAuth) (*Mux, error) {
+	auth.ApplyDefaultHostCheck(nil)
+
 	err := auth.Validate()
 	if err != nil {
 		return nil, err

@@ -31,6 +31,8 @@ type Auth struct {
 	PrivateKey     string
 	PrivateKeyFile string
 
+	HostKeyCheck ssh.HostKeyCallback
+
 	TimeoutMs  int
 	MaxSession int
 
@@ -72,12 +74,7 @@ func (a *Auth) SSHConfig() (*ssh.ClientConfig, error) {
 		config.Auth = append(config.Auth, method)
 	}
 	if a.PrivateKeyFile != "" {
-		fd, err := os.Open(a.PrivateKeyFile)
-		if err != nil {
-			return nil, err
-		}
-		defer fd.Close()
-		pemBytes, err := ioutil.ReadAll(fd)
+		pemBytes, err := ioutil.ReadFile(a.PrivateKeyFile)
 		if err != nil {
 			return nil, fmt.Errorf("invalid private key file: %s", err.Error())
 		}
@@ -91,6 +88,10 @@ func (a *Auth) SSHConfig() (*ssh.ClientConfig, error) {
 		return nil, errors.New("no auth method supplied")
 	}
 	config.Timeout = time.Duration(a.TimeoutMs) * time.Millisecond
+	config.HostKeyCallback = a.HostKeyCheck
+	if config.HostKeyCallback == nil {
+		config.HostKeyCallback = ssh.InsecureIgnoreHostKey()
+	}
 	a.config = config
 	return a.config, nil
 }
