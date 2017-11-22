@@ -230,9 +230,15 @@ func (s *SSH) Close() {
 	if s.gate != nil {
 		s.gate.decrRefs()
 	}
-	s.sessionPool.Close()
-	s.sftp.Close()
-	s.conn.Close()
+	if s.sessionPool != nil {
+		s.sessionPool.Close()
+	}
+	if s.sftp != nil {
+		s.sftp.Close()
+	}
+	if s.conn != nil {
+		s.conn.Close()
+	}
 }
 
 func (s *SSH) CmdOutput() []byte {
