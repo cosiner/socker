@@ -122,8 +122,9 @@ type SSH struct {
 func LocalOnly() *SSH {
 	var refs int32
 	return &SSH{
-		localFs: FsLocal{},
-		_refs:   &refs,
+		localFs:  FsLocal{},
+		remoteFs: FsLocal{},
+		_refs:    &refs,
 	}
 }
 
