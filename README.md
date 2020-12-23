@@ -35,15 +35,13 @@ func testSSH(t *testing.T, gate *SSH) {
 }
 
 func testAgent(t *testing.T, agent *SSH) {
-	agent.ReserveCmdOutput(nil).ReserveError(nil)
-
 	agent.Rcmd("ls -al ~/")
 	agent.Put("~/local", "~/remote")
 	agent.Get("~/remote", "~/local")
 
 	agent.RcmdBg("sleep 30", "sleep.out", "sleep.err")
 
-	t.Log(string(agent.CmdOutput()))
+	t.Log(string(agent.Output()))
 	err := agent.Error()
 	if err != nil {
 		t.Error(err)
