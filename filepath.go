@@ -1,4 +1,3 @@
-// Package socker
 package socker
 
 import (
@@ -19,7 +18,6 @@ type Filepath interface {
 	Split(path string) (dir, file string)
 	Join(elem ...string) string
 	Ext(path string) string
-	Abs(path string) (string, error)
 	Rel(basepath, targpath string) (string, error)
 	Base(path string) string
 	Dir(path string) string
@@ -42,7 +40,6 @@ func (localFilepath) SplitList(path string) []string       { return filepath.Spl
 func (localFilepath) Split(path string) (dir, file string) { return filepath.Split(path) }
 func (localFilepath) Join(elem ...string) string           { return filepath.Join(elem...) }
 func (localFilepath) Ext(path string) string               { return filepath.Ext(path) }
-func (localFilepath) Abs(path string) (string, error)      { return filepath.Abs(path) }
 func (localFilepath) Rel(basepath, targpath string) (string, error) {
 	return filepath.Rel(basepath, targpath)
 }
@@ -116,12 +113,6 @@ func (f virtualFilepath) Ext(path string) string {
 		}
 	}
 	return ""
-}
-func (f virtualFilepath) Abs(path string) (string, error) {
-	if f.IsUnix {
-		return f.unixAbs(path)
-	}
-	return f.windowsAbs(path)
 }
 
 func (f virtualFilepath) Rel(basepath, targpath string) (string, error) {
@@ -460,30 +451,6 @@ func (f virtualFilepath) windowsIsAbs(path string) (b bool) {
 		return false
 	}
 	return f.windowsIsSlash(path[0])
-}
-
-func (f virtualFilepath) abs(path string) (string, error) {
-	if f.IsUnix {
-		return f.unixAbs(path)
-	}
-	return f.windowsAbs(path)
-}
-
-func (f virtualFilepath) unixAbs(path string) (string, error) {
-	if f.unixIsAbs(path) {
-		return f.clean(path), nil
-	}
-
-	wd, err := f.Getwd()
-	if err != nil {
-		return "", err
-	}
-	return f.unixJoin([]string{wd, path}), nil
-}
-
-func (f virtualFilepath) windowsAbs(path string) (string, error) {
-	// need windows syscall
-	return path, nil
 }
 
 func (f virtualFilepath) join(elem []string) string {

@@ -10,7 +10,7 @@ type FsLocal struct {
 	localFilepath
 }
 
-var fsLocal Fs = FsLocal{}
+var _ Fs = FsLocal{}
 
 func (f FsLocal) Filepath() Filepath {
 	return f

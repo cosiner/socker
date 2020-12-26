@@ -34,11 +34,13 @@ type SSH struct {
 	sftp        *sftp.Client
 	sessionPool *sessionPool
 
-	remoteFs Fs
-	localFs  Fs
+	// absolute fs
+	rfs Fs
+	lfs Fs
 
-	rcwd string
-	lcwd string
+	// current work dir
+	rwd string
+	cwd string
 
 	gate   *SSH
 	openAt time.Time
@@ -48,8 +50,8 @@ type SSH struct {
 func LocalOnly() *SSH {
 	var refs int32
 	return &SSH{
-		localFs:     FsLocal{},
-		remoteFs:    FsLocal{},
+		lfs:         FsLocal{},
+		rfs:         FsLocal{},
 		sessionPool: newSessionPool(0),
 		openAt:      time.Now(),
 		_refs:       &refs,
@@ -68,23 +70,23 @@ func NewSSH(client *ssh.Client, maxSession int, gate *SSH) (*SSH, error) {
 		sftp:        sftpClient,
 		sessionPool: newSessionPool(maxSession),
 
-		remoteFs: NewFsSftp(sftpClient),
-		localFs:  FsLocal{},
+		rfs: NewFsSftp(sftpClient),
+		lfs: FsLocal{},
 
 		gate:   gate,
 		openAt: time.Now(),
 		_refs:  &refs,
 	}
 	if err == nil {
-		s.lcwd, err = s.localFs.Getwd()
-		if err == nil {
-			s.lcwd, err = s.localFs.Filepath().Abs(s.lcwd)
+		s.cwd, err = os.Getwd()
+		if err == nil && !s.lfs.Filepath().IsAbs(s.cwd) {
+			err = fmt.Errorf("local work dir is not absolute: %s", s.cwd)
 		}
 	}
 	if err == nil {
-		s.rcwd, err = s.remoteFs.Getwd()
-		if err == nil {
-			s.rcwd, _ = s.remoteFs.Filepath().Abs(s.rcwd)
+		s.rwd, err = sftpClient.Getwd()
+		if err == nil && !s.rfs.Filepath().IsAbs(s.rwd) {
+			err = fmt.Errorf("remote work dir is not absolute: %s", s.rwd)
 		}
 	}
 	if err != nil {
@@ -212,6 +214,11 @@ func (s *SSH) Error() error {
 	return s.lastErr
 }
 
+// save error state from external, such as fs op
+func (s *SSH) SetError(err error) {
+	s.lastErr = s.lastErr
+}
+
 func (s *SSH) ClearError() {
 	s.lastErr = nil
 }
@@ -235,14 +242,12 @@ func (s *SSH) NopClose() *SSH {
 	return &ns
 }
 
-// Note: LocalFs and RemoteFs doesn't aware of current working directory
-
-func (s *SSH) LocalFs() Fs {
-	return s.localFs
+func (s *SSH) Lfs() Fs {
+	return newWdFs(s.cwd, s.lfs)
 }
 
-func (s *SSH) RemoteFs() Fs {
-	return s.remoteFs
+func (s *SSH) Rfs() Fs {
+	return newWdFs(s.rwd, s.rfs)
 }
 
 func (s *SSH) Rcmd(cmd string, env ...string) {
@@ -267,13 +272,13 @@ func (s *SSH) LcmdBg(cmd, stdout, stderr string, env ...string) {
 
 func (s *SSH) LwriteFile(path string, data []byte) {
 	s.withErrorCheck(func() error {
-		return s.writeFile(s.localFs, s.lpath(path), data)
+		return s.writeFile(s.lfs, s.lpath(path), data)
 	})
 }
 
 func (s *SSH) RwriteFile(path string, data []byte) {
 	s.withErrorCheck(func() error {
-		return s.writeFile(s.remoteFs, s.rpath(path), data)
+		return s.writeFile(s.rfs, s.rpath(path), data)
 	})
 }
 
@@ -283,7 +288,7 @@ func (s *SSH) LreadFile(path string) []byte {
 		err  error
 	)
 	s.withErrorCheck(func() error {
-		data, err = s.readFile(s.localFs, s.lpath(path))
+		data, err = s.readFile(s.lfs, s.lpath(path))
 		return err
 	})
 	return data
@@ -295,7 +300,7 @@ func (s *SSH) RreadFile(path string) []byte {
 		err  error
 	)
 	s.withErrorCheck(func() error {
-		data, err = s.readFile(s.remoteFs, s.rpath(path))
+		data, err = s.readFile(s.rfs, s.rpath(path))
 		return err
 	})
 	return data
@@ -307,7 +312,7 @@ func (s *SSH) Lreaddir(path string, n int) []os.FileInfo {
 		err   error
 	)
 	s.withErrorCheck(func() error {
-		items, err = s.readdir(s.localFs, s.lpath(path), n)
+		items, err = s.readdir(s.lfs, s.lpath(path), n)
 		return err
 	})
 	return items
@@ -319,7 +324,7 @@ func (s *SSH) Rreaddir(path string, n int) []os.FileInfo {
 		err   error
 	)
 	s.withErrorCheck(func() error {
-		items, err = s.readdir(s.remoteFs, s.rpath(path), n)
+		items, err = s.readdir(s.rfs, s.rpath(path), n)
 		return err
 	})
 	return items
@@ -327,25 +332,25 @@ func (s *SSH) Rreaddir(path string, n int) []os.FileInfo {
 
 func (s *SSH) Put(path, remotePath string) {
 	s.withErrorCheck(func() error {
-		return s.sync(s.localFs, s.remoteFs, s.lpath(path), s.rpath(remotePath))
+		return s.sync(s.lfs, s.rfs, s.lpath(path), s.rpath(remotePath))
 	})
 }
 
 func (s *SSH) Get(remotePath, path string) {
 	s.withErrorCheck(func() error {
-		return s.sync(s.remoteFs, s.localFs, s.rpath(remotePath), s.lpath(path))
+		return s.sync(s.rfs, s.lfs, s.rpath(remotePath), s.lpath(path))
 	})
 }
 
 func (s *SSH) Rremove(path string, recursive bool) {
 	s.withErrorCheck(func() error {
-		return s.remove(s.remoteFs, s.rpath(path), recursive)
+		return s.remove(s.rfs, s.rpath(path), recursive)
 	})
 }
 
 func (s *SSH) Lremove(path string, recursive bool) {
 	s.withErrorCheck(func() error {
-		return s.remove(s.localFs, s.lpath(path), recursive)
+		return s.remove(s.lfs, s.lpath(path), recursive)
 	})
 }
 
@@ -355,7 +360,7 @@ func (s *SSH) Rexists(path string) bool {
 		err    error
 	)
 	s.withErrorCheck(func() error {
-		exists, err = s.exists(s.remoteFs, s.rpath(path))
+		exists, err = s.exists(s.rfs, s.rpath(path))
 		return err
 	})
 	return exists
@@ -367,7 +372,7 @@ func (s *SSH) Lexists(path string) bool {
 		err    error
 	)
 	s.withErrorCheck(func() error {
-		exists, err = s.exists(s.localFs, s.lpath(path))
+		exists, err = s.exists(s.lfs, s.lpath(path))
 		return err
 	})
 	return exists
@@ -375,12 +380,12 @@ func (s *SSH) Lexists(path string) bool {
 
 // Rcwd return current remote working directory
 func (s *SSH) Rcwd() string {
-	return s.rcwd
+	return s.rwd
 }
 
 // Rcd will change the base path of relative path applied to remote host
 func (s *SSH) Rcd(cwd string) {
-	s.rcwd = s.rpath(cwd)
+	s.rwd = s.rpath(cwd)
 }
 
 // TmpRcd will create an copy of current instance but doesn't change reference count,
@@ -394,12 +399,12 @@ func (s *SSH) TmpRcd(cwd string) *SSH {
 
 // Lcwd return current local working directory
 func (s *SSH) Lcwd() string {
-	return s.lcwd
+	return s.cwd
 }
 
 // Lcd do the same thing as Rcd but for local host
 func (s *SSH) Lcd(cwd string) {
-	s.lcwd = s.lpath(cwd)
+	s.cwd = s.lpath(cwd)
 }
 
 // TmpLcd do the same thing as TmpLcd but for local host
@@ -412,11 +417,11 @@ func (s *SSH) TmpLcd(cwd string) *SSH {
 // private
 
 func (s *SSH) rcmdStr(cmd, env string) string {
-	return s.cmdStr(s.rcwd, env, cmd)
+	return s.cmdStr(s.rwd, env, cmd)
 }
 
 func (s *SSH) lcmdStr(cmd, env string) string {
-	return s.cmdStr(s.lcwd, env, cmd)
+	return s.cmdStr(s.cwd, env, cmd)
 }
 
 func (s *SSH) cmdStr(cwd, env, cmd string) string {
@@ -656,16 +661,9 @@ func (s *SSH) readFile(fs Fs, path string) ([]byte, error) {
 }
 
 func (s *SSH) rpath(path string) string {
-	return s.path(s.remoteFs.Filepath(), s.rcwd, path)
+	return fsPath(s.rfs, s.rwd, path)
 }
 
 func (s *SSH) lpath(path string) string {
-	return s.path(s.localFs.Filepath(), s.lcwd, path)
-}
-
-func (s *SSH) path(fpath Filepath, base, cwd string) string {
-	if fpath.IsAbs(cwd) {
-		return cwd
-	}
-	return fpath.Join(base, cwd)
+	return fsPath(s.lfs, s.cwd, path)
 }

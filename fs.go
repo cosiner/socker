@@ -14,7 +14,6 @@ type Fs interface {
 	Chown(name string, uid, gid int) error
 	Chtimes(name string, atime time.Time, mtime time.Time) error
 
-	Getwd() (dir string, err error)
 	IsExist(err error) bool
 	IsNotExist(err error) bool
 
