@@ -113,7 +113,6 @@ func testSSH(t *testing.T, gate *SSH) {
 }
 
 func testAgent(t *testing.T, agent *SSH) {
-	agent.ReserveCmdOutput(nil).ReserveError(nil)
 
 	agent.Rcmd("ls -al ~/")
 	agent.Put("~/local", "~/remote")
@@ -121,7 +120,7 @@ func testAgent(t *testing.T, agent *SSH) {
 
 	agent.RcmdBg("sleep 30", "sleep.out", "sleep.err")
 
-	t.Log(string(agent.CmdOutput()))
+	t.Log(string(agent.Output()))
 	err := agent.Error()
 	if err != nil {
 		t.Error(err)
@@ -218,6 +217,6 @@ func TestMux(t *testing.T) {
 func TestLocalOnly(t *testing.T) {
 	local := LocalOnly()
 
-	out, err := local.TmpLcd("/").Lcmd("ls $DIR", "DIR=`pwd`")
-	t.Log(string(out), err)
+	local.TmpLcd("/").Lcmd("ls $DIR", "DIR=`pwd`")
+	t.Log(local.Output())
 }
